@@ -359,7 +359,8 @@ def save():
     current_date = time.strftime("%Y_%m_%d-%H_%M_%S")
     xls_file_path = xls_path + "/" + file_target + "-" + current_date + ".xls"
     with open(xls_file_path, 'wb') as xls_file:
-        xls_file.write(response.content)
+        for fragment in response.iter_content(chunk_size=256):
+            xls_file.write(fragment)
     print(">> INFO: Download finalizado!")
     file1 = io.open(xls_file_path, "r", encoding="ISO-8859-1")
     data = file1.readlines()
@@ -448,7 +449,7 @@ def final_request(default):
                     'ctl00$cphBody$hdfExport': str(now_milliseconds())
                 }
                 response = requests.post('http://www.ssp.sp.gov.br/transparenciassp/', headers=headers, cookies=cookies,
-                                         data=data, verify=False)
+                                         data=data, verify=False, stream=True)
                 request_counter()
                 if request_is_successful():
                     return True
@@ -601,11 +602,13 @@ else:
             # ----------------------------------------------------------------------------------------------------------
                     check_directory(default)
                     save()
+                    time.sleep(5)
                     break
                 else:
                     error_counter += 1
                     if error_counter == request_limit:
                         print(">> INFO: Limite de requisições excedido, programa sendo finalizado.")
+                        time.sleep(5)
                         break
             if error_counter == request_limit:
                 break
@@ -619,9 +622,11 @@ else:
                 # ------------------------------------------------------------------------------------------------------
                 check_directory(default)
                 save()
+                time.sleep(5)
                 break
             else:
                 error_counter += 1
                 if error_counter == request_limit:
                     print(">> INFO: Limite de requisições excedido, programa sendo finalizado.")
+                    time.sleep(5)
                     break
