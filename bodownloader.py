@@ -7,9 +7,12 @@ import datetime
 import io
 import os
 import pandas as pd
+import csv
+from func_timeout import func_set_timeout
 # ----------------------------------------------------------------------------------------------------------------------
 # Variáveis Globais
 # ----------------------------------------------------------------------------------------------------------------------
+duration_limit = 120
 request_limit = 10
 sleep_seconds = 1
 num_requests = 0
@@ -40,8 +43,8 @@ month_path = ""
 xls_path = ""
 csv_path = ""
 target_list = ['Feminicidio', 'MortePolicial', 'RouboVeiculo']
-month_list = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho',
-              'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
+month_list = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho',
+              'agosto', 'setembro', 'outubro', 'novembro', 'dezembro']
 # ----------------------------------------------------------------------------------------------------------------------
 # Obter os milisegundos do hdf_file:
 # ----------------------------------------------------------------------------------------------------------------------
@@ -271,7 +274,7 @@ def get_request_limit():
                             '   3 - Dez tentativas \n'
                             '   4 - Quinze tentativas \n'
                             '   5 - Vinte tentativas \n'
-                            '   \n  OBS: Quanto maior o número de tentativas, maior chance de sucesso em requisições \n'
+                            '   \n  OBS: Quanto maior o número de tentativas, maior chance de sucesso em requisições.\n'
                             '\nEscolha o limite de tentativas: ')
         if input_value.isdigit():
             option = int(input_value)
@@ -333,13 +336,13 @@ def check_directory(default):
     global xls_path
     global csv_path
 
-    path = "Boletins_de_ocorrencia/"+ file_target
+    path = "boletins_de_ocorrencia/"+ file_target
     if not os.path.exists(path):
         os.makedirs(path)
 
     if default:
         year_path = datetime.date.today().year
-        month_path = month_list[(datetime.date.today().month - 1)]
+        month_path = month_list[(datetime.date.today().month - 3)]
         xls_path = path + "/xls/" + str(year_path) + "/" + month_path
         csv_path = path + "/csv/" + str(year_path) + "/" + month_path
     else:
@@ -362,7 +365,7 @@ def save():
         for fragment in response.iter_content(chunk_size=256):
             xls_file.write(fragment)
     print(">> INFO: Download finalizado!")
-    file1 = io.open(xls_file_path, "r", encoding="ISO-8859-1")
+    file1 = io.open(xls_file_path, "r", encoding="cp1252")
     data = file1.readlines()
     xldoc = Workbook()
     sheet = xldoc.add_sheet("Sheet1", cell_overwrite_ok=True)
@@ -374,11 +377,76 @@ def save():
     df = pd.ExcelFile(xls_file_path).parse('Sheet1')
     current_date = time.strftime("%Y_%m_%d-%H_%M_%S")
     csv_file_path = csv_path + "/" + file_target + "-" + current_date + ".csv"
-    df.to_csv(csv_file_path, sep=",", index=False, encoding="ISO-8859-1")
+    df.to_csv(csv_file_path, sep=";", index=False, quoting=csv.QUOTE_NONE, escapechar=' ', encoding="cp1252")
     print(">> INFO: Arquivo CSV salvo em: {}".format(csv_file_path))
+# ----------------------------------------------------------------------------------------------------------------------
+# Requisição para obter o ano
+# ----------------------------------------------------------------------------------------------------------------------
+@func_set_timeout(duration_limit)
+def year_request():
+    global response
+    data = {
+        '__EVENTTARGET': lk_year_event_target,
+        '__EVENTARGUMENT': '',
+        '__LASTFOCUS': '',
+        '__VIEWSTATE': view_state,
+        '__VIEWSTATEGENERATOR': view_state_generator,
+        '__EVENTVALIDATION': event_validation,
+        'ctl00$cphBody$hdfExport': ''
+    }
+    response = requests.post(
+        'http://www.ssp.sp.gov.br/transparenciassp/Consulta.aspx', headers=headers, data=data)
+    request_counter()
+    if request_is_successful():
+        scraping()
+        return True
+    else:
+        return False
+# ----------------------------------------------------------------------------------------------------------------------
+# Requisição para obter o mês
+# ----------------------------------------------------------------------------------------------------------------------
+@func_set_timeout(duration_limit)
+def month_request():
+    global response
+    data = {
+        '__EVENTTARGET': lk_month_event_target,
+        '__EVENTARGUMENT': '',
+        '__LASTFOCUS': '',
+        '__VIEWSTATE': view_state,
+        '__VIEWSTATEGENERATOR': view_state_generator,
+        '__EVENTVALIDATION': event_validation,
+        'ctl00$cphBody$hdfExport': ''
+    }
+    response = requests.post(
+        'http://www.ssp.sp.gov.br/transparenciassp/Consulta.aspx', headers=headers, data=data)
+    request_counter()
+    if request_is_successful():
+        scraping()
+        return True
+    else:
+        return False
+# ----------------------------------------------------------------------------------------------------------------------
+# Requisição para obter a planiha:
+# ----------------------------------------------------------------------------------------------------------------------
+@func_set_timeout(240)
+def stream_request():
+    global response
+    data = {
+        '__EVENTTARGET': export_event_target,
+        '__EVENTARGUMENT': '',
+        '__LASTFOCUS': '',
+        '__VIEWSTATE': view_state,
+        '__VIEWSTATEGENERATOR': view_state_generator,
+        '__EVENTVALIDATION': event_validation,
+        'ctl00$cphBody$filtroDepartamento': department_filter,
+        'ctl00$cphBody$hdfExport': str(now_milliseconds())
+    }
+    response = requests.post('http://www.ssp.sp.gov.br/transparenciassp/', headers=headers, cookies=cookies,
+                             data=data, verify=False, stream=True)
 # ----------------------------------------------------------------------------------------------------------------------
 # Requisição inicial
 # ----------------------------------------------------------------------------------------------------------------------
+@func_set_timeout(duration_limit)
 def initial_request():
     global response
     response = requests.get(
@@ -406,6 +474,7 @@ def initial_request():
 # ----------------------------------------------------------------------------------------------------------------------
 # Requisição intermediária
 # ----------------------------------------------------------------------------------------------------------------------
+@func_set_timeout(duration_limit)
 def intermediate_request():
     global response
     data = {
@@ -438,18 +507,7 @@ def final_request(default):
             # Se for requisição default
             # ----------------------------------------------------------------------------------------------------------
             if default:
-                data = {
-                    '__EVENTTARGET': export_event_target,
-                    '__EVENTARGUMENT': '',
-                    '__LASTFOCUS': '',
-                    '__VIEWSTATE': view_state,
-                    '__VIEWSTATEGENERATOR': view_state_generator,
-                    '__EVENTVALIDATION': event_validation,
-                    'ctl00$cphBody$filtroDepartamento': department_filter,
-                    'ctl00$cphBody$hdfExport': str(now_milliseconds())
-                }
-                response = requests.post('http://www.ssp.sp.gov.br/transparenciassp/', headers=headers, cookies=cookies,
-                                         data=data, verify=False, stream=True)
+                stream_request()
                 request_counter()
                 if request_is_successful():
                     return True
@@ -463,76 +521,19 @@ def final_request(default):
                     time.sleep(sleep_seconds)
                     if month_request():
                         time.sleep(sleep_seconds)
-                        data = {
-                            '__EVENTTARGET': export_event_target,
-                            '__EVENTARGUMENT': '',
-                            '__LASTFOCUS': '',
-                            '__VIEWSTATE': view_state,
-                            '__VIEWSTATEGENERATOR': view_state_generator,
-                            '__EVENTVALIDATION': event_validation,
-                            'ctl00$cphBody$filtroDepartamento': department_filter,
-                            'ctl00$cphBody$hdfExport': str(now_milliseconds())
-                        }
-                        response = requests.post('http://www.ssp.sp.gov.br/transparenciassp/', headers=headers,
-                                                 cookies=cookies,
-                                                 data=data, verify=False)
+                        stream_request()
                         request_counter()
                         if request_is_successful():
                             return True
                         else:
                             return False
-                    else:
+                    else: # MONTH_REQUEST
                         return False
-                else:
+                else: # YEAR_REQUEST
                     return False
-
         else: # INTERMEDIATE_REQUEST
             return False
     else: # INITIAL_REQUEST
-        return False
-# ----------------------------------------------------------------------------------------------------------------------
-# Requisição para o ano
-# ----------------------------------------------------------------------------------------------------------------------
-def year_request():
-    global response
-    data = {
-        '__EVENTTARGET': lk_year_event_target,
-        '__EVENTARGUMENT': '',
-        '__LASTFOCUS': '',
-        '__VIEWSTATE': view_state,
-        '__VIEWSTATEGENERATOR': view_state_generator,
-        '__EVENTVALIDATION': event_validation,
-        'ctl00$cphBody$hdfExport': ''
-    }
-    response = requests.post(
-        'http://www.ssp.sp.gov.br/transparenciassp/Consulta.aspx', headers=headers, data=data)
-    request_counter()
-    if request_is_successful():
-        scraping()
-        return True
-    else:
-        return False
-# ----------------------------------------------------------------------------------------------------------------------
-# Requisição para o mês
-# ----------------------------------------------------------------------------------------------------------------------
-def month_request():
-    global response
-    data = {
-        '__EVENTTARGET': lk_month_event_target,
-        '__EVENTARGUMENT': '',
-        '__LASTFOCUS': '',
-        '__VIEWSTATE': view_state,
-        '__VIEWSTATEGENERATOR': view_state_generator,
-        '__EVENTVALIDATION': event_validation,
-        'ctl00$cphBody$hdfExport': ''
-    }
-    response = requests.post(
-        'http://www.ssp.sp.gov.br/transparenciassp/Consulta.aspx', headers=headers, data=data)
-    request_counter()
-    if request_is_successful():
-        scraping()
-        return True
-    else:
         return False
 # ----------------------------------------------------------------------------------------------------------------------
 # 0º passo: Verificar se irá ultilizar a requisição default
@@ -564,15 +565,15 @@ if is_default():
 else:
     default = False
     # ------------------------------------------------------------------------------------------------------------------
-    # 1º passo: Obter o tipo de planiha desejada.
+    # 1º passo: Obter a categoria do BO.
     # ------------------------------------------------------------------------------------------------------------------
     get_target()
     # ------------------------------------------------------------------------------------------------------------------
-    # 2º passo: Obter o ano do BO
+    # 2º passo: Obter o ano do BO.
     # ------------------------------------------------------------------------------------------------------------------
     get_target_year()
     # ------------------------------------------------------------------------------------------------------------------
-    # 3º passo: Obter o mês do BO
+    # 3º passo: Obter o mês do BO.
     # ------------------------------------------------------------------------------------------------------------------
     get_target_month()
     # ------------------------------------------------------------------------------------------------------------------
@@ -585,7 +586,7 @@ else:
     get_request_limit()
     # ------------------------------------------------------------------------------------------------------------------
     # 6º passo: Realizar requisições sequenciais para obter os valores necessários para download do BO.
-    # Prineira requisição - Obter valor de __VIEWSTATE e __EVENTVALIDATION.
+    # Primeira requisição - Obter valor de __VIEWSTATE e __EVENTVALIDATION.
     # Segunda requisição - Obter o cookie.
     # Terceira requisição - Realizar o download do arquivo.
     # ------------------------------------------------------------------------------------------------------------------
@@ -630,3 +631,4 @@ else:
                     print(">> INFO: Limite de requisições excedido, programa sendo finalizado.")
                     time.sleep(5)
                     break
+input('\nPressione qualquer tecla para finalizar...')
